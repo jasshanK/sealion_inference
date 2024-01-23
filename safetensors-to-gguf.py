@@ -94,6 +94,7 @@ fout.write(struct.pack("i", hparams["n_layers"]))
 fout.write(struct.pack("i", hparams["vocab_size"]))
 fout.write(struct.pack("f", hparams["attn_config"]["alibi_bias_max"]))
 fout.write(struct.pack("f", hparams["attn_config"]["clip_qkv"] or 0.0))
+fout.write(struct.pack("?", hparams["attn_config"]["qk_ln"]))
 fout.write(struct.pack("i", ftype))
 
 vocab_size = hparams["vocab_size"]
@@ -101,7 +102,7 @@ vocab_size = hparams["vocab_size"]
 tokenizer = AutoTokenizer.from_pretrained(dir_model, trust_remote_code=True)
 encoder = tokenizer.get_vocab()
 # Add added_tokens (special tokens) to the encoder
-#encoder.update(tokenizer.get_added_vocab())
+encoder.update(tokenizer.get_added_vocab())
 
 byte_encoder = bytes_to_unicode()
 byte_decoder = {v: k for k, v in byte_encoder.items()}
@@ -122,7 +123,7 @@ for key in sorted(encoder, key=encoder.get):
     fout.write(text)
     counter += 1
 
-# Repeat last token until vocab_size
+# Repeat last token until vocab_size (making sure bytes are packed till the expected mark)
 while counter < vocab_size:
     fout.write(struct.pack("i", len(text)))
     fout.write(text)
@@ -136,7 +137,6 @@ for part_name in part_names:
     print(f"\n* Loading part: {part_name}")
     with safe_open(f"{dir_model}/{part_name}", framework="pt", device=0) as model_part:
         for name in model_part.keys():
-            #data = model_part[name].squeeze()
             data = model_part.get_tensor(name)
             n_dims = len(data.shape)
     
@@ -146,9 +146,12 @@ for part_name in part_names:
             if ftype == 1 and name[-7:] == ".weight" and n_dims > 1:
                 ftype_cur = 1
 
-            # forcing data type to f32 if not already f32 or f16
+            # forcing data type to f32 or f16 if not already f32 or f16
             if data.dtype not in (torch.float16, torch.float32):
-                data = data.to(torch.float32)
+                if (ftype_cur == 1):
+                    data = data.to(torch.float16)
+                else:
+                    data = data.to(torch.float32)
 
             # .cpu() to copy over data from gpu to cpu
             data = data.squeeze().cpu().numpy()

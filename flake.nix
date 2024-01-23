@@ -14,6 +14,8 @@
           ccls 
           pyright
 
+          cmake
+
           python310
           python310Packages.pip
           python310Packages.virtualenv
