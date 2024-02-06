@@ -120,6 +120,7 @@ bool mpt_model_quantize(const std::string & fname_inp,
     // regexes of tensor names to be quantized
     const std::vector<std::string> to_quant = {
         ".*weight",
+        ".*bias",
     };
 
     if (!ggml_common_quantize_0(finp, fout, ftype, to_quant, {})) {

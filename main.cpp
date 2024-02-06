@@ -41,14 +41,14 @@ struct mpt_layer {
 
     // attention
     struct ggml_tensor * c_attn_wqkv_weight;
+    struct ggml_tensor * c_attn_q_ln_weight;
+    struct ggml_tensor * c_attn_k_ln_weight;
     struct ggml_tensor * c_attn_out_proj_weight;
-    struct ggml_tensor * c_attn_q_proj_weight;
-    struct ggml_tensor * c_attn_k_proj_weight;
 
     struct ggml_tensor * c_attn_wqkv_bias;
+    struct ggml_tensor * c_attn_q_ln_bias;
+    struct ggml_tensor * c_attn_k_ln_bias;
     struct ggml_tensor * c_attn_out_proj_bias;
-    struct ggml_tensor * c_attn_q_proj_bias;
-    struct ggml_tensor * c_attn_k_proj_bias;
 
     // post normalization
     struct ggml_tensor * norm_2_weight;
@@ -290,6 +290,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
 
     const auto & hparams = model.hparams;
     const size_t n_ctx = hparams.n_ctx;
+    const size_t max_seq_len = hparams.max_seq_len;
 
     {
         const size_t n_embd = hparams.d_model;
@@ -297,7 +298,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
         const size_t n_vocab = hparams.n_vocab;
 
         ctx_size += ggml_row_size(wtype,         n_embd * n_vocab); // wte_weight
-        ctx_size += ggml_row_size(wtype,         n_embd * n_vocab); // wpe_weight
+        ctx_size += ggml_row_size(wtype,         n_embd * max_seq_len); // wpe_weight
         ctx_size += ggml_row_size(GGML_TYPE_F32, n_embd);           // norm_f_weight
         ctx_size += ggml_row_size(GGML_TYPE_F32, n_embd);           // norm_f_bias
 
@@ -321,9 +322,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
         ctx_size += n_ctx * n_layer * ggml_row_size(GGML_TYPE_F16, n_embd); // memory_k
         ctx_size += n_ctx * n_layer * ggml_row_size(GGML_TYPE_F16, n_embd); // memory_v
                                                                            
-        //ctx_size += (1 + 6 * n_layer) * 512; // object overhead 
-        ctx_size += (2 + 12 * n_layer) * 512; // object overhead 
-        ctx_size *= 2;
+        ctx_size += (1 + 6 * n_layer) * 512; // object overhead 
 
         printf("%s: ggml ctx size = %6.2f MB\n", __func__, ctx_size / (1024.0 * 1024.0));
     }
@@ -354,7 +353,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
         model.layers.resize(n_layer);
 
         model.wte_weight    = ggml_new_tensor_2d(ctx, wtype, n_embd, n_vocab);
-        model.wpe_weight    = ggml_new_tensor_2d(ctx, wtype, n_embd, n_ctx);
+        model.wpe_weight    = ggml_new_tensor_2d(ctx, wtype, n_embd, max_seq_len);
 
         model.norm_f_weight = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
         model.norm_f_bias   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_embd);
@@ -364,7 +363,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
         model.tensors["transformer.wpe.weight"]    = model.wpe_weight;
 
         model.tensors["transformer.norm_f.weight"] = model.norm_f_weight;
-        model.tensors["transformer.norm_f.bias"] = model.norm_f_bias;
+        model.tensors["transformer.norm_f.bias"]   = model.norm_f_bias;
 
         for (int i = 0; i < (int) n_layer; ++i) {
             auto & layer = model.layers[i];
@@ -372,39 +371,39 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
             layer.norm_1_weight          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,     n_embd);
             layer.c_attn_wqkv_weight     = ggml_new_tensor_2d(ctx, wtype,             n_embd, 3 * n_embd);
             layer.c_attn_out_proj_weight = ggml_new_tensor_2d(ctx, wtype,             n_embd,     n_embd);
-            layer.c_attn_q_proj_weight   = ggml_new_tensor_1d(ctx, wtype,             n_embd);
-            layer.c_attn_k_proj_weight   = ggml_new_tensor_1d(ctx, wtype,             n_embd);
+            layer.c_attn_q_ln_weight     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             n_embd);
+            layer.c_attn_k_ln_weight     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             n_embd);
             layer.norm_2_weight          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,     n_embd);
             layer.ffn_up_proj_weight     = ggml_new_tensor_2d(ctx, wtype,             n_embd, 4 * n_embd);
             layer.ffn_down_proj_weight   = ggml_new_tensor_2d(ctx, wtype,         4 * n_embd,     n_embd);
 
-            layer.norm_1_bias          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,     n_embd);
-            layer.c_attn_wqkv_bias     = ggml_new_tensor_2d(ctx, wtype,             n_embd, 3 * n_embd);
-            layer.c_attn_out_proj_bias = ggml_new_tensor_2d(ctx, wtype,             n_embd,     n_embd);
-            layer.c_attn_q_proj_bias   = ggml_new_tensor_1d(ctx, wtype,             n_embd);
-            layer.c_attn_k_proj_bias   = ggml_new_tensor_1d(ctx, wtype,             n_embd);
-            layer.norm_2_bias          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,     n_embd);
-            layer.ffn_up_proj_bias     = ggml_new_tensor_2d(ctx, wtype,             n_embd, 4 * n_embd);
-            layer.ffn_down_proj_bias   = ggml_new_tensor_2d(ctx, wtype,         4 * n_embd,     n_embd);
+            layer.norm_1_bias            = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,     n_embd);
+            layer.c_attn_wqkv_bias       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             3 * n_embd);
+            layer.c_attn_out_proj_bias   = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             n_embd);
+            layer.c_attn_q_ln_bias       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             n_embd);
+            layer.c_attn_k_ln_bias       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             n_embd);
+            layer.norm_2_bias            = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,     n_embd);
+            layer.ffn_up_proj_bias       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             4 * n_embd);
+            layer.ffn_down_proj_bias     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,             n_embd);
 
             // map by name
             model.tensors["transformer.blocks." + std::to_string(i) + ".norm_1.weight"]        = layer.norm_1_weight;
             model.tensors["transformer.blocks." + std::to_string(i) + ".attn.Wqkv.weight"]     = layer.c_attn_wqkv_weight;
             model.tensors["transformer.blocks." + std::to_string(i) + ".attn.out_proj.weight"] = layer.c_attn_out_proj_weight;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.q_ln.weight"]     = layer.c_attn_q_proj_weight;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.k_ln.weight"]     = layer.c_attn_k_proj_weight;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.q_ln.weight"]     = layer.c_attn_q_ln_weight;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.k_ln.weight"]     = layer.c_attn_k_ln_weight;
             model.tensors["transformer.blocks." + std::to_string(i) + ".norm_2.weight"]        = layer.norm_2_weight;
             model.tensors["transformer.blocks." + std::to_string(i) + ".ffn.up_proj.weight"]   = layer.ffn_up_proj_weight;
             model.tensors["transformer.blocks." + std::to_string(i) + ".ffn.down_proj.weight"] = layer.ffn_down_proj_weight;
 
-            model.tensors["transformer.blocks." + std::to_string(i) + ".norm_1.bias"]        = layer.norm_1_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.Wqkv.bias"]     = layer.c_attn_wqkv_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.out_proj.bias"] = layer.c_attn_out_proj_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.q_ln.bias"]     = layer.c_attn_q_proj_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.k_ln.bias"]     = layer.c_attn_k_proj_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".norm_2.bias"]        = layer.norm_2_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".ffn.up_proj.bias"]   = layer.ffn_up_proj_bias;
-            model.tensors["transformer.blocks." + std::to_string(i) + ".ffn.down_proj.bias"] = layer.ffn_down_proj_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".norm_1.bias"]          = layer.norm_1_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.Wqkv.bias"]       = layer.c_attn_wqkv_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.out_proj.bias"]   = layer.c_attn_out_proj_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.q_ln.bias"]       = layer.c_attn_q_ln_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".attn.k_ln.bias"]       = layer.c_attn_k_ln_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".norm_2.bias"]          = layer.norm_2_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".ffn.up_proj.bias"]     = layer.ffn_up_proj_bias;
+            model.tensors["transformer.blocks." + std::to_string(i) + ".ffn.down_proj.bias"]   = layer.ffn_down_proj_bias;
         }
     }
 
@@ -455,6 +454,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
 
             std::string name(length, 0);
             fin.read(&name[0], length);
+            printf("%s: tensor_name= %s\n", __func__, name.c_str());
 
             if (model.tensors.find(name) == model.tensors.end()) {
                 fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.c_str());
@@ -463,8 +463,8 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
 
             auto tensor = model.tensors[name];
             if (ggml_nelements(tensor) != nelements) {
-            printf("%s: tensor_nelements= %ld\n", __func__, ggml_nelements(tensor));
-            printf("%s: nelements= %d\n", __func__, nelements);
+                printf("%s: tensor_nelements= %ld\n", __func__, ggml_nelements(tensor));
+                printf("%s: nelements= %d\n", __func__, nelements);
                 fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.c_str());
                 return false;
             }
@@ -478,12 +478,12 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
             }
 
             // for debugging
-            if (0) {
+            if (1) {
                 printf("%24s - [%5d, %5d], type = %6s, %6.2f MB, %9zu bytes\n", name.c_str(), ne[0], ne[1],
-                       ggml_type_name(ggml_type(ttype)), ggml_nbytes(tensor) / 1024.0 / 1024.0, ggml_nbytes(tensor));
+                        ggml_type_name(ggml_type(ttype)), ggml_nbytes(tensor) / 1024.0 / 1024.0, ggml_nbytes(tensor));
             }
-
-            const size_t bpe = ggml_type_size(ggml_type(ttype));
+            
+            const size_t bpe = ggml_type_size(ggml_type(ttype)); // size of type
 
             if ((nelements * bpe) / ggml_blck_size(tensor->type) != ggml_nbytes(tensor)) {
                 fprintf(stderr,
